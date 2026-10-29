@@ -81,7 +81,8 @@ final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelega
     private static func jumpShellCommand(paneID: String) -> String? {
         guard let herdr = Executables.locate("herdr") else { return nil }
         var command = "\(herdr) agent focus \(paneID)"
-        if let bundleID = TerminalActivator.hostTerminalBundleID() {
+        let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        if let bundleID = TerminalActivator.hostTerminalBundleID(frontmost: frontmost) {
             command += "; /usr/bin/open -b \(bundleID)"
         }
         return command
