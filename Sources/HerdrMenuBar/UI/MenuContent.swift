@@ -18,6 +18,14 @@ struct MenuContent: View {
             agentArea
         }
         .frame(width: Self.panelWidth)
+        .onChange(of: monitor.agents.count) { _, _ in Self.schedulePanelResize() }
+        .onChange(of: monitor.isConnected) { _, _ in Self.schedulePanelResize() }
+    }
+
+    /// Runs after SwiftUI commits the new layout, or the fitting size read in
+    /// MenuPanel still reflects the previous content.
+    private static func schedulePanelResize() {
+        DispatchQueue.main.async { MenuPanel.resizeToFit() }
     }
 
     // A ScrollView has no intrinsic height inside MenuBarExtra and collapses a
