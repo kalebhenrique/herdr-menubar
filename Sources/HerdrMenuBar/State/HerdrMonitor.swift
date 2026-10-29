@@ -147,7 +147,10 @@ final class HerdrMonitor: ObservableObject {
         // reconcile runs every few seconds, so the dropdown would never settle.
         guard sorted != agents else { return }
 
-        let previousStatuses = Dictionary(uniqueKeysWithValues: agents.map { ($0.paneID, $0.status) })
+        // Decode dedupes pane ids; `uniquingKeysWith` keeps a malformed
+        // snapshot from crashing here anyway.
+        let previousStatuses = Dictionary(agents.map { ($0.paneID, $0.status) },
+                                          uniquingKeysWith: { _, latest in latest })
         agents = sorted
         Log.debug("agent list changed (\(sorted.count) agents)")
         announceBlockedTransitions(since: previousStatuses)

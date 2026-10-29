@@ -59,4 +59,49 @@ final class DecodeSnapshotTests: XCTestCase {
         XCTAssertTrue(snapshot.workspaces.isEmpty)
         XCTAssertTrue(snapshot.paneIDs.isEmpty)
     }
+
+    // MARK: - Duplicate pane ids
+
+    func testDuplicatePaneIDKeepsLastObservation() {
+        let json: JSONObject = [
+            "agents": [
+                ["pane_id": "p1", "agent_status": "working"],
+                ["pane_id": "p1", "agent_status": "blocked"],
+            ],
+        ]
+
+        let agents = HerdrClient.dedupeByPaneID(HerdrClient.decodeSnapshot(json).agents)
+
+        XCTAssertEqual(agents.map(\.paneID), ["p1"])
+        XCTAssertEqual(agents.first?.status, .blocked)
+    }
+
+    func testDedupePreservesOrderOfDistinctAgents() {
+        let json: JSONObject = [
+            "agents": [
+                ["pane_id": "p1", "agent_status": "working"],
+                ["pane_id": "p2", "agent_status": "done"],
+                ["pane_id": "p1", "agent_status": "blocked"],
+                ["pane_id": "p3", "agent_status": "idle"],
+            ],
+        ]
+
+        let agents = HerdrClient.dedupeByPaneID(HerdrClient.decodeSnapshot(json).agents)
+
+        XCTAssertEqual(agents.map(\.paneID), ["p2", "p1", "p3"])
+        XCTAssertEqual(agents.map(\.status), [.done, .blocked, .idle])
+    }
+
+    func testDedupeReturnsInputUnchangedWhenUnique() {
+        let json: JSONObject = [
+            "agents": [
+                ["pane_id": "p1", "agent_status": "working"],
+                ["pane_id": "p2", "agent_status": "done"],
+            ],
+        ]
+
+        let agents = HerdrClient.dedupeByPaneID(HerdrClient.decodeSnapshot(json).agents)
+
+        XCTAssertEqual(agents.map(\.paneID), ["p1", "p2"])
+    }
 }

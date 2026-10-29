@@ -101,10 +101,23 @@ struct HerdrClient {
     // Internal so the test target can exercise the pure decoding logic.
     static func decodeSnapshot(_ json: JSONObject) -> Snapshot {
         Snapshot(
-            agents: (json["agents"] as? [JSONObject] ?? []).compactMap(decodeAgent),
+            agents: dedupeByPaneID((json["agents"] as? [JSONObject] ?? []).compactMap(decodeAgent)),
             workspaces: (json["workspaces"] as? [JSONObject] ?? []).compactMap(decodeWorkspace),
             paneIDs: (json["panes"] as? [JSONObject] ?? []).compactMap { $0["pane_id"] as? String }
         )
+    }
+
+    /// A snapshot can repeat a pane (e.g. rapid resyncs on the server side); the
+    /// later entry is the later observation, so it wins. Duplicates would crash
+    /// `Dictionary(uniqueKeysWithValues:)` on statuses in HerdrMonitor and give
+    /// a row a duplicated `ForEach` id, so they are dropped at the decode site.
+    static func dedupeByPaneID(_ agents: [Agent]) -> [Agent] {
+        let lastIndex = Dictionary(agents.enumerated().map { ($0.element.paneID, $0.offset) },
+                                   uniquingKeysWith: { _, latest in latest })
+        guard lastIndex.count != agents.count else { return agents }
+        return agents.enumerated().compactMap { index, agent in
+            lastIndex[agent.paneID] == index ? agent : nil
+        }
     }
 
     static func decodeAgent(_ json: JSONObject) -> Agent? {
