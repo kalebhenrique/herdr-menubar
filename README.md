@@ -44,6 +44,46 @@ For clickable notifications on a local (unsigned) build, install
 brew install terminal-notifier
 ```
 
+## Terminal Integration (Auto-Start & Auto-Stop)
+
+If you don't want the app running continuously in the background, you can integrate it directly with the `herdr` CLI:
+- **`herdr`**: Starts Herdr Menu Bar in the background if it's not already running.
+- **`herdr server stop`**: Shuts down the Herdr server and closes Herdr Menu Bar automatically.
+- **Quit on server stop**: Inside the app's Settings (⚙️), you can also enable **Quit when Herdr stops** so the menu bar automatically closes whenever an active Herdr session ends.
+
+### Option 1: From the Menu Bar App
+Open Settings (⚙️) in the menu bar dropdown and click **Add to ~/.zshrc** (or click **Copy shell wrapper**).
+
+### Option 2: Automatic CLI Setup
+Run the setup command using the installed app or repository script:
+
+```bash
+"/Applications/Herdr Menu Bar.app/Contents/MacOS/HerdrMenuBar" --install
+# or from this repository:
+./scripts/setup-alias.sh
+```
+
+### Option 3: Manual Shell Integration
+Add this shell function to your `~/.zshrc` (or `~/.bashrc`):
+
+```bash
+herdr() {
+    if [[ "$1" == "server" && "$2" == "stop" ]]; then
+        command herdr "$@"
+        osascript -e 'quit app id "io.github.aditya24sharma.herdr-menubar"' 2>/dev/null || true
+    else
+        open -b io.github.aditya24sharma.herdr-menubar --background 2>/dev/null || true
+        command herdr "$@"
+    fi
+}
+```
+
+Then reload your shell:
+
+```bash
+source ~/.zshrc
+```
+
 ## Debugging
 
 ```bash

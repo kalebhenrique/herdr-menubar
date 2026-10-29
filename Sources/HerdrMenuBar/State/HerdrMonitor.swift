@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Status arrives by push, but the set of panes is reconciled on a timer: Herdr's
@@ -15,10 +16,14 @@ final class HerdrMonitor: ObservableObject {
     nonisolated private static let threadStackSize = 512 * 1024
 
     private var monitorThread: Thread?
+    private let settings: Settings
     private let notificationPolicy: NotificationPolicy
     nonisolated private let client = HerdrClient()
+    private var hasConnectedOnce = false
+    private var autoQuitTask: Task<Void, Never>?
 
     init(settings: Settings, notifier: Notifier) {
+        self.settings = settings
         notificationPolicy = NotificationPolicy(settings: settings, notifier: notifier)
     }
 
@@ -94,8 +99,12 @@ final class HerdrMonitor: ObservableObject {
 
     nonisolated private func reportConnected() {
         Task { @MainActor [weak self] in
-            self?.isConnected = true
-            self?.lastError = nil
+            guard let self else { return }
+            self.isConnected = true
+            self.lastError = nil
+            self.hasConnectedOnce = true
+            self.autoQuitTask?.cancel()
+            self.autoQuitTask = nil
         }
     }
 
@@ -103,8 +112,23 @@ final class HerdrMonitor: ObservableObject {
         let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         Log.debug("connection ended: \(message)")
         Task { @MainActor [weak self] in
-            self?.isConnected = false
-            self?.lastError = message
+            guard let self else { return }
+            self.isConnected = false
+            self.lastError = message
+            if self.hasConnectedOnce && self.settings.quitOnServerStop {
+                self.scheduleAutoQuit()
+            }
+        }
+    }
+
+    private func scheduleAutoQuit() {
+        guard autoQuitTask == nil else { return }
+        Log.debug("Herdr connection lost after active session; scheduling auto-quit in 3 seconds")
+        autoQuitTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled, let self, !self.isConnected, self.settings.quitOnServerStop else { return }
+            Log.debug("terminating app because Herdr server stopped")
+            NSApplication.shared.terminate(nil)
         }
     }
 
