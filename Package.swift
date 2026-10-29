@@ -8,6 +8,11 @@ let package = Package(
         .executableTarget(
             name: "HerdrMenuBar",
             path: "Sources/HerdrMenuBar"
+        ),
+        .testTarget(
+            name: "HerdrMenuBarTests",
+            dependencies: [.target(name: "HerdrMenuBar")],
+            path: "Tests/HerdrMenuBarTests"
         )
     ]
 )

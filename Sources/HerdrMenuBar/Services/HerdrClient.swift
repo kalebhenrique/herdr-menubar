@@ -17,7 +17,8 @@ struct StatusChange {
     let displayAgent: String?
 }
 
-private typealias JSONObject = [String: Any]
+// Internal so the test target can build fixture payloads for the decoders.
+typealias JSONObject = [String: Any]
 
 struct HerdrClient {
     private static let requestTimeoutSeconds = 5
@@ -97,7 +98,8 @@ struct HerdrClient {
         return response
     }
 
-    private static func decodeSnapshot(_ json: JSONObject) -> Snapshot {
+    // Internal so the test target can exercise the pure decoding logic.
+    static func decodeSnapshot(_ json: JSONObject) -> Snapshot {
         Snapshot(
             agents: (json["agents"] as? [JSONObject] ?? []).compactMap(decodeAgent),
             workspaces: (json["workspaces"] as? [JSONObject] ?? []).compactMap(decodeWorkspace),
@@ -105,7 +107,7 @@ struct HerdrClient {
         )
     }
 
-    private static func decodeAgent(_ json: JSONObject) -> Agent? {
+    static func decodeAgent(_ json: JSONObject) -> Agent? {
         guard let paneID = json["pane_id"] as? String else { return nil }
         return Agent(
             paneID: paneID,
