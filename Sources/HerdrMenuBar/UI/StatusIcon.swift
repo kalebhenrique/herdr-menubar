@@ -36,16 +36,67 @@ enum StatusIcon {
     private static let jumpKeyframes: [(time: Double, lift: CGFloat)] =
         [(0, 0), (0.08, 2.5), (0.16, 0), (0.24, 1.3), (0.32, 0)]
 
+    // Animation frames are quantized on a fixed grid so the menu bar label can
+    // reuse one pre-built NSImage per (status, connected, frame) instead of
+    // building a fresh image on every 12 Hz tick. The grid is slightly coarser
+    // than the animator's tick, so loops stay seamless.
+    private static let workingFrameCount = 20
+    private static let blockedFrameCount = 24
+
+    // Only reached from the app's label closure, on the main actor; ~44 small
+    // images at most, no eviction needed.
+    private struct CacheKey: Hashable {
+        let status: AgentStatus
+        let connected: Bool
+        let frame: Int
+    }
+    private static var imageCache: [CacheKey: NSImage] = [:]
+
     static func image(for status: AgentStatus, connected: Bool, phase: Double) -> NSImage {
+        let key = CacheKey(status: status, connected: connected,
+                           frame: frameIndex(for: status, connected: connected, phase: phase))
+        if let cached = imageCache[key] { return cached }
+
+        let seconds = secondsInLap(for: key)
         let image = NSImage(size: canvas, flipped: false) { _ in
-            draw(status: status, connected: connected, seconds: phase)
+            draw(status: key.status, connected: key.connected, seconds: seconds)
             return true
         }
         // Redraw on every paint so `labelColor` re-resolves when the menu bar
         // switches between light and dark.
         image.cacheMode = .never
         image.isTemplate = false
+        imageCache[key] = image
         return image
+    }
+
+    private static func frameIndex(for status: AgentStatus, connected: Bool,
+                                   phase: Double) -> Int {
+        let count: Int
+        let lap: Double
+        if status == .working && connected {
+            (count, lap) = (workingFrameCount, lapSeconds)
+        } else if status == .blocked && connected {
+            (count, lap) = (blockedFrameCount, jumpSeconds)
+        } else {
+            return 0
+        }
+        let progress = (phase / lap).truncatingRemainder(dividingBy: 1)
+        let index = Int(progress * Double(count))
+        return min(max(index, 0), count - 1)
+    }
+
+    /// Reproduces the exact draw time of the frame's position in the lap, so the
+    /// cached geometry is identical to what the continuous phase would produce.
+    private static func secondsInLap(for key: CacheKey) -> Double {
+        let count: Int
+        let lap: Double
+        if key.status == .working && key.connected {
+            (count, lap) = (workingFrameCount, lapSeconds)
+        } else {
+            (count, lap) = (blockedFrameCount, jumpSeconds)
+        }
+        return Double(key.frame) / Double(count) * lap
     }
 
     private static func draw(status: AgentStatus, connected: Bool, seconds: Double) {
