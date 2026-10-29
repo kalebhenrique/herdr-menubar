@@ -2,27 +2,37 @@ import AppKit
 
 // Herdr can only move focus inside itself; raising the terminal window is a macOS job.
 // Walking the client's parent chain finds the exact hosting instance, unlike TERM_PROGRAM.
+//
+// The scan is pure sysctl + `NSRunningApplication` lookups (both thread-safe), so it
+// can run off the main thread; the one main-thread input, the frontmost app, is
+// captured by the caller and passed in as `frontmost`.
 enum TerminalActivator {
     private static let herdrProcessName = "herdr"
     private static let serverArgument = "server"
     private static let maxAncestorHops = 16
 
-    static func activateHostTerminal() {
-        hostTerminal()?.activate(options: [.activateAllWindows])
+    /// Raises the terminal hosting the herdr client. `frontmost` must be captured
+    /// on the main thread by the caller; the activation itself hops back to main,
+    /// the only AppKit call that must run there.
+    static func activateHostTerminal(frontmost: pid_t?) {
+        guard let pid = hostTerminalProcessID(frontmost: frontmost) else { return }
+        DispatchQueue.main.async {
+            NSRunningApplication(processIdentifier: pid)?.activate(options: [.activateAllWindows])
+        }
     }
 
-    static func hostTerminalBundleID() -> String? {
-        hostTerminal()?.bundleIdentifier
+    static func hostTerminalBundleID(frontmost: pid_t?) -> String? {
+        guard let pid = hostTerminalProcessID(frontmost: frontmost) else { return nil }
+        return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
     }
 
-    private static func hostTerminal() -> NSRunningApplication? {
-        guard let clientPID = herdrClientPIDs().first else { return nil }
-        return guiAncestor(of: clientPID)
+    private static func hostTerminalProcessID(frontmost: pid_t?) -> pid_t? {
+        guard let clientPID = herdrClientPIDs(frontmost: frontmost).first else { return nil }
+        return guiAncestor(of: clientPID)?.processIdentifier
     }
 
-    private static func herdrClientPIDs() -> [pid_t] {
+    private static func herdrClientPIDs(frontmost: pid_t?) -> [pid_t] {
         let clients = ProcessInspector.allPIDs().filter(isHerdrClient)
-        let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
         return clients.sorted { lhs, rhs in
             let lhsInFront = guiAncestor(of: lhs)?.processIdentifier == frontmost
             let rhsInFront = guiAncestor(of: rhs)?.processIdentifier == frontmost

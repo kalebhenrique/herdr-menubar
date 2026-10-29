@@ -9,6 +9,10 @@ struct HerdrMenuBarApp: App {
     @StateObject private var monitor: HerdrMonitor
 
     init() {
+        if ShellIntegration.handleCommandLine(CommandLine.arguments) {
+            exit(0)
+        }
+
         let settings = Settings()
         let notifier = Notifier()
         let monitor = HerdrMonitor(settings: settings, notifier: notifier)

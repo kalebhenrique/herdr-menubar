@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MenuContent: View {
     @EnvironmentObject private var monitor: HerdrMonitor
+    @EnvironmentObject private var settings: Settings
     @State private var showingSettings = false
 
     private static let panelWidth: CGFloat = 258
@@ -11,11 +12,6 @@ struct MenuContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             topBar
-
-            if showingSettings {
-                SettingsPanel()
-                Divider()
-            }
 
             if !monitor.isConnected { disconnectedNotice }
 
@@ -94,14 +90,24 @@ struct MenuContent: View {
 
     private var settingsToggle: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.12)) { showingSettings.toggle() }
+            showingSettings.toggle()
         } label: {
-            Image(systemName: "gearshape.fill")
-                .font(.system(size: 12))
+            Image(systemName: showingSettings ? "gearshape.fill" : "gearshape")
+                .font(.system(size: 13))
                 .foregroundStyle(showingSettings ? Color.primary : Color.secondary)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("Settings")
         .pointerCursor()
+        .popover(isPresented: $showingSettings, arrowEdge: .leading) {
+            SettingsPanel(onClose: {
+                showingSettings = false
+            })
+            .environmentObject(settings)
+            .padding(14)
+            .frame(width: 250)
+        }
     }
 }

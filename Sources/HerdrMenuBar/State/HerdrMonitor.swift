@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Status arrives by push, but the set of panes is reconciled on a timer: Herdr's
@@ -15,10 +16,25 @@ final class HerdrMonitor: ObservableObject {
     nonisolated private static let threadStackSize = 512 * 1024
 
     private var monitorThread: Thread?
+    private let settings: Settings
     private let notificationPolicy: NotificationPolicy
     nonisolated private let client = HerdrClient()
+    private var hasConnectedOnce = false
+    private var autoQuitTask: Task<Void, Never>?
+
+    // Snapshot and status-change Tasks are handed to the main actor unstructured,
+    // so they can run out of order. The monitor thread stamps each hand-off with
+    // a sequence at initiation (only it writes this counter) and the apply sites
+    // drop anything stale: a snapshot requested before an event was read carries
+    // older state than that event even when its Task runs later. Without this,
+    // a late snapshot reverted a pushed status and the next reconcile
+    // re-announced the transition as a duplicate notification.
+    nonisolated(unsafe) private var handoffSequence = 0
+    private var lastAppliedSequence = 0
+    private var lastEventSequence: [String: Int] = [:]
 
     init(settings: Settings, notifier: Notifier) {
+        self.settings = settings
         notificationPolicy = NotificationPolicy(settings: settings, notifier: notifier)
     }
 
@@ -73,7 +89,9 @@ final class HerdrMonitor: ObservableObject {
         var lastReconcile = Date()
         while true {
             if case .statusChange(let change) = try stream.next() {
-                Task { @MainActor [weak self] in self?.apply(change) }
+                handoffSequence += 1
+                let sequence = handoffSequence
+                Task { @MainActor [weak self] in self?.apply(change, sequence: sequence) }
             }
             // Checked every iteration, not only on timeout, so a busy stream can't starve it.
             guard Date().timeIntervalSince(lastReconcile) >= Self.reconcileInterval else { continue }
@@ -87,15 +105,21 @@ final class HerdrMonitor: ObservableObject {
     }
 
     nonisolated private func resync() throws -> [String] {
+        handoffSequence += 1
+        let sequence = handoffSequence
         let snapshot = try client.snapshot()
-        Task { @MainActor [weak self] in self?.apply(snapshot) }
+        Task { @MainActor [weak self] in self?.apply(snapshot, sequence: sequence) }
         return snapshot.paneIDs
     }
 
     nonisolated private func reportConnected() {
         Task { @MainActor [weak self] in
-            self?.isConnected = true
-            self?.lastError = nil
+            guard let self else { return }
+            self.isConnected = true
+            self.lastError = nil
+            self.hasConnectedOnce = true
+            self.autoQuitTask?.cancel()
+            self.autoQuitTask = nil
         }
     }
 
@@ -103,18 +127,38 @@ final class HerdrMonitor: ObservableObject {
         let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         Log.debug("connection ended: \(message)")
         Task { @MainActor [weak self] in
-            self?.isConnected = false
-            self?.lastError = message
+            guard let self else { return }
+            self.isConnected = false
+            self.lastError = message
+            if self.hasConnectedOnce && self.settings.quitOnServerStop {
+                self.scheduleAutoQuit()
+            }
+        }
+    }
+
+    private func scheduleAutoQuit() {
+        guard autoQuitTask == nil else { return }
+        Log.debug("Herdr connection lost after active session; scheduling auto-quit in 3 seconds")
+        autoQuitTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled, let self, !self.isConnected, self.settings.quitOnServerStop else { return }
+            Log.debug("terminating app because Herdr server stopped")
+            NSApplication.shared.terminate(nil)
         }
     }
 
     // MARK: - State application
 
-    private func apply(_ snapshot: Snapshot) {
+    private func apply(_ snapshot: Snapshot, sequence: Int) {
+        guard sequence > lastAppliedSequence else { return }
+        lastAppliedSequence = sequence
         let byID = Dictionary(snapshot.workspaces.map { ($0.workspaceID, $0) },
                               uniquingKeysWith: { _, latest in latest })
         if workspaces != byID { workspaces = byID }
         replaceAgents(snapshot.agents)
+        // Panes that vanished no longer need their last event sequence.
+        let live = Set(agents.map(\.paneID))
+        lastEventSequence = lastEventSequence.filter { live.contains($0.key) }
     }
 
     private func replaceAgents(_ incoming: [Agent]) {
@@ -123,7 +167,10 @@ final class HerdrMonitor: ObservableObject {
         // reconcile runs every few seconds, so the dropdown would never settle.
         guard sorted != agents else { return }
 
-        let previousStatuses = Dictionary(uniqueKeysWithValues: agents.map { ($0.paneID, $0.status) })
+        // Decode dedupes pane ids; `uniquingKeysWith` keeps a malformed
+        // snapshot from crashing here anyway.
+        let previousStatuses = Dictionary(agents.map { ($0.paneID, $0.status) },
+                                          uniquingKeysWith: { _, latest in latest })
         agents = sorted
         Log.debug("agent list changed (\(sorted.count) agents)")
         announceBlockedTransitions(since: previousStatuses)
@@ -138,10 +185,15 @@ final class HerdrMonitor: ObservableObject {
         }
     }
 
-    private func apply(_ change: StatusChange) {
+    private func apply(_ change: StatusChange, sequence: Int) {
         guard let index = agents.firstIndex(where: { $0.paneID == change.paneID }) else { return }
         let previous = agents[index].status
         guard change.status != previous else { return }
+        // Same-pane events are last-writer-wins; events for different panes
+        // all apply even when their Tasks reorder.
+        guard sequence > (lastEventSequence[change.paneID] ?? 0) else { return }
+        lastEventSequence[change.paneID] = sequence
+        lastAppliedSequence = max(lastAppliedSequence, sequence)
         Log.debug("status \(change.paneID): \(previous.rawValue) -> \(change.status.rawValue)")
         agents[index].status = change.status
         if let title = change.title, !title.isEmpty { agents[index].title = title }
